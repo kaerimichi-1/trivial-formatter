@@ -22,6 +22,51 @@ This file is formatted by trivial-formatter itself.
 
 For detail, see [spec files](spec/trivial-formatter.lisp).
 
+### Format a single file
+
+`fmt-file` accepts a pathname or filename string. It reads only that file and
+does not load an ASDF system or enumerate its other files. As with `fmt`, the
+default prints a preview, and `:supersede` writes the formatted result back.
+The packages referenced by `in-package` should already exist in the Lisp image.
+
+```lisp
+(trivial-formatter:fmt-file #P"src/problem-001.ct")
+(trivial-formatter:fmt-file #P"src/problem-001.ct" :supersede)
+```
+
+### Coalton formatting
+
+Ensure ASDF resolves this fork rather than an original copy in a dependency
+directory, then load the optional extension before formatting Coalton source:
+
+```lisp
+(push #P"/path/to/trivial-formatter/" asdf:*central-registry*)
+(asdf:load-system :trivial-formatter/coalton)
+(trivial-formatter:fmt-file #P"src/problem-001.ct")
+```
+
+With this extension loaded, `.ct` files select a dedicated reader and printer
+context. The result is independent of the caller's readtable; `[]`, `[=>]`,
+comprehensions and `ƒ` retain their source notation and comments.
+
+Short `let` keeps `let pattern =` together and wraps the right-hand expression
+when needed. `do` binds, loop labels and conditions, function parameters,
+patterns and type signatures have syntax-specific layout rules. Empty binding
+and parameter lists remain `()`.
+
+Inside `coalton-toplevel`, definition groups are separated by one blank line.
+Adjacent declarations for the same name, attributes such as `derive`, and
+leading documentation comments stay attached to their definition. Inline
+comments remain attached to the preceding source item. Source items are never
+reordered. Common Lisp forms retain their own formatting rules, including
+inside `lisp` escape forms.
+
+Already-desugared internal marker calls are left as written. The formatter
+preserves bracket notation supplied in the input; it does not guess whether
+an explicit internal call originally came from bracket syntax.
+
+Run its tests with `(asdf:test-system :trivial-formatter/coalton)`.
+
 ### Line width.
 The default depends on implementation.
 (Probably 80 though.)

@@ -23,6 +23,30 @@
   :components
   ((:file "trivial-formatter")))
 
+(defsystem "trivial-formatter/coalton"
+  :description "Coalton syntax preservation and formatting for trivial-formatter."
+  :license "MIT"
+  :depends-on ("trivial-formatter" "coalton")
+  :pathname "src/"
+  :serial t
+  :components ((:file "coalton-package")
+               (:file "coalton-reader")
+               (:file "coalton")
+               (:file "coalton-expressions"))
+  :in-order-to ((test-op (test-op "trivial-formatter/coalton/tests"))))
+
+(defsystem "trivial-formatter/coalton/tests"
+  :depends-on ("trivial-formatter/coalton")
+  :pathname "spec/"
+  :components ((:file "coalton")
+               (:static-file "fixtures/coalton-spacing-input.ct")
+               (:static-file "fixtures/coalton-spacing-expected.ct")
+               (:static-file "fixtures/coalton-syntax-input.ct")
+               (:static-file "fixtures/coalton-syntax-expected.ct"))
+  :perform (test-op (operation system)
+             (declare (ignore operation system))
+             (uiop:symbol-call :trivial-formatter/coalton/tests :run-tests)))
+
 ;;; These forms below are added by JINGOH.GENERATOR.
 ;; Ensure in ASDF for pretty printings.
 (in-package :asdf)

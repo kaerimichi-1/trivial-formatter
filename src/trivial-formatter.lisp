@@ -4,9 +4,12 @@
   (:use :cl)
   (:export ;; Main api
            #:fmt
+           #:fmt-file
            ;; Useful helpers
            #:read-as-code
            #:print-as-code
+           #:write-code
+           #:call-with-file-formatting-context
            ;; Readtable name.
            #:as-code
            ;; Special variable
@@ -242,17 +245,34 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
   (asdf:load-system system)
   (load-external-formatters)
   (dolist (component (component-children (asdf:find-system system)))
-    (if (null if-exists)
-        (debug-printer component)
-        (let ((string
-               ;; In order to open file for superseding,
-               ;; we need to close it beforehand.
-               (with-output-to-string (*standard-output*)
-                 (debug-printer component))))
-          (with-open-file (out (asdf:component-pathname component) :direction :output
-                           :if-does-not-exist :create
-                           :if-exists if-exists)
-            (write-string string out))))))
+    (%fmt-file (asdf:component-pathname component) if-exists)))
+
+(defun %fmt-file (pathname if-exists)
+  (call-with-file-formatting-context
+   (pathname pathname)
+   (lambda ()
+     (if (null if-exists)
+         (debug-file-printer pathname)
+         (let ((string
+                 ;; Finish formatting before opening the output file.
+                 (with-output-to-string (*standard-output*)
+                   (debug-file-printer pathname))))
+           (with-open-file (out pathname :direction :output
+                               :if-does-not-exist :create :if-exists if-exists)
+             (write-string string out))))))
+  nil)
+
+(defgeneric call-with-file-formatting-context (pathname function)
+  (:documentation "Call FUNCTION with the formatting context for PATHNAME."))
+
+(defmethod call-with-file-formatting-context ((pathname pathname) function)
+  (funcall function))
+
+(defun fmt-file (pathname &optional (if-exists nil))
+  "Format only PATHNAME, without loading or enumerating an ASDF system.
+NIL prints a preview. Otherwise IF-EXISTS is passed to CL:OPEN, as in FMT."
+  (load-external-formatters)
+  (%fmt-file (pathname pathname) if-exists))
 
 ;;;; READ-AS-CODE
 
@@ -415,6 +435,8 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
          (values t &optional))
         read-as-code))
 
+(defvar *comment-source-states* nil)
+
 (defun read-as-code
        (&optional stream (eof-error-p t) (eof-value nil) (recursive-p nil))
   ;; FIXME: 3rd slow profile report.
@@ -427,7 +449,9 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
             (named-readtables:merge-readtables-into (copy-readtable)
                                                     (named-readtables:copy-named-readtable
                                                       'as-code))))
-         (*standard-input* (or stream *standard-input*)))
+         (*standard-input* (or stream *standard-input*))
+         (*comment-source-states*
+           (or *comment-source-states* (make-hash-table :test #'eq))))
     (%read-as-code *standard-input* eof-error-p eof-value recursive-p)))
 
 (defun cleanup-brokens ()
@@ -447,6 +471,15 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
 (defstruct comment content)
 
 (defstruct (line-comment (:include comment)))
+
+(defstruct (source-line-comment (:include line-comment))
+  ;; :UNKNOWN is used for streams which cannot be repositioned.
+  (inline-p :unknown))
+
+(defun line-comment-inline-p (comment)
+  (if (source-line-comment-p comment)
+      (source-line-comment-inline-p comment)
+      :unknown))
 
 (defmethod print-object ((c line-comment) stream)
   (if (uiop:string-prefix-p #\; (comment-content c))
@@ -528,11 +561,43 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
         :else
           :collect (%read-as-code stream t t t)))
 
+(defun source-comment-inline-p (stream)
+  "Whether text precedes this comment on its source line.
+Scan forward from a saved stream position, never into the middle of an encoded
+character. Restore the reader position even when the stream is not seekable."
+  (let ((position (ignore-errors (file-position stream))))
+    (if (and *comment-source-states* (integerp position))
+        (handler-case
+            (destructuring-bind (checkpoint has-text)
+                (gethash stream *comment-source-states* '(0 nil))
+              (when (> checkpoint position)
+                (setf checkpoint 0 has-text nil))
+              (unwind-protect
+                   (if (file-position stream checkpoint)
+                     (loop :with before = has-text
+                           :while (< (file-position stream) position)
+                           :for char = (read-char stream nil nil)
+                           :while char
+                           :do (setf before has-text
+                                     has-text
+                                       (cond ((find char '(#\Newline #\Return)) nil)
+                                             ((find char '(#\Space #\Tab)) has-text)
+                                             (t t)))
+                           :finally
+                              (setf (gethash stream *comment-source-states*)
+                                      (list position has-text))
+                              (return before))
+                       :unknown)
+                (file-position stream position)))
+          (error () :unknown))
+        :unknown)))
+
 (defun |line-comment-reader| (stream character)
   (declare (ignore character))
-  (make-line-comment :content (string-trim " "
-                                           (the simple-string
-                                                (read-line stream)))))
+  (let ((inline-p (source-comment-inline-p stream)))
+    (make-source-line-comment
+     :inline-p inline-p
+     :content (string-trim " " (the simple-string (read-line stream))))))
 
 (declaim
  (ftype (function
@@ -811,11 +876,14 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
 (defun single-semicoloned-line-comment-line-p (line)
   (ppcre:scan "^ *(; |;$)" line))
 
-(declaim
- (ftype (function (t &optional stream-designator) (values null &optional))
-        print-as-code))
-
 (defun print-as-code (exp &optional stream)
+  "Print EXP as source code using the extensible WRITE-CODE pipeline."
+  (write-code exp stream))
+
+(defgeneric write-code (exp stream)
+  (:documentation "Output source code for EXP. Called by PRINT-AS-CODE."))
+
+(defmethod write-code ((exp t) stream)
   "Print EXP as lisp source code to STREAM."
   (let ((*standard-output* (output-stream stream)) (*print-circle*))
     (if (typep exp '(or block-comment string))
@@ -872,9 +940,14 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
 
 (defun debug-printer (component)
   "Print formatted lisp source code of the COMPONENT."
-  (let ((package *package*))
+  (debug-file-printer (asdf:component-pathname component)))
+
+(defun debug-file-printer (pathname)
+  "Print formatted source from PATHNAME."
+  (let ((package *package*)
+        (*comment-source-states* (make-hash-table :test #'eq)))
     (unwind-protect
-        (with-open-file (input (asdf:component-pathname component))
+        (with-open-file (input pathname)
           (loop :with tag = '#:end
                 :for exp = (read-as-code input nil tag) :then next
                 :with next
@@ -888,7 +961,8 @@ IF-EXISTS is a same value of the same parameter of CL:OPEN."
                       ;; we need to eval IN-PACKAGE.
                       (when (listp exp) ; ignore top level conditional.
                         (let ((exp
-                               (ignore-errors (read-from-string string nil))))
+                               (let ((*read-eval* nil))
+                                 (ignore-errors (read-from-string string nil)))))
                           (when (typep exp '(cons (eql in-package)))
                             ;; Eval only top-level IN-PACKAGE.
                             ;; We believe no macro expanded into IN-PACKAGE.

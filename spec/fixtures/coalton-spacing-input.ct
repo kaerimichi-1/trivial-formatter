@@ -1,0 +1,7 @@
+(coalton-toplevel
+  (derive Show)
+  (define-type Status Ready Busy)
+  ;; Increment a reading.
+  (declare next (Integer -> Integer))
+  (define (next value) (+ value 1)) ; keep this inline
+  (define initial 0))
