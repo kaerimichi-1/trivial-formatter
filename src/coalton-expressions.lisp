@@ -220,10 +220,14 @@
                                     (make-role-form :role :type :value item))))
 
 (defun pprint-fn (stream form)
-  (pprint-expression stream form 1
-                     :header-mapper (lambda (index item)
-                                      (declare (ignore index))
-                                      (make-role-form :role :parameters :value item))))
+  (let* ((items (cdr form))
+         (single-body-p (= 2 (length (significant-items items))))
+         (compact-p (and single-body-p (notany #'trivia-p items))))
+    (pprint-expression stream form 1
+                       :body-separator (if compact-p :linear :newline)
+                       :header-mapper (lambda (index item)
+                                        (declare (ignore index))
+                                        (make-role-form :role :parameters :value item)))))
 
 (defun pprint-lisp (stream form)
   (pprint-expression stream form 2

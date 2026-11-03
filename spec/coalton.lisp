@@ -107,6 +107,48 @@
                        :test #'equal))
            "Definition families did not receive exactly one blank line between groups.")))
 
+(defun check-fn-layouts ()
+  (dolist (source '("(fn (x) x)" "(fn (x)             x)"))
+    (check (equal "(fn (x) x)" (format-source source))
+           "A short fn was not compacted: ~A" source))
+  (check (equal "(fn (x) x)"
+                (format-source (format nil "(fn (x)~%             x)")))
+         "An existing multiline identity fn did not become a single line.")
+  (check (equal "(fn () 1)" (format-source "(fn ()             1)"))
+         "An empty fn parameter list or its whitespace was not preserved.")
+  (let ((output (format-source
+                 "(coalton [(fn (x)             x) (fn (y)             (+ y 1))])")))
+    (check (equal output
+                   (format nil "(coalton~%  [(fn (x) x) (fn (y) (+ y 1))])"))
+           "Functions inside a collection did not normalize:~%~A" output))
+  (let ((output (format-source
+                 "(fn (x) (combine-very-long-symbol-name x x x x x x))" 40)))
+    (check (uiop:string-prefix-p (format nil "(fn (x)~%  (combine-") output)
+           "A long fn body was not indented two spaces:~%~A" output))
+  (let* ((output (format-source
+                  "(coalton [(fn (x) (combine-very-long-symbol-name x x x x x x))])" 40))
+         (lines (uiop:split-string output :separator '(#\Newline)))
+         (header (find-if (lambda (line) (search "(fn " line)) lines))
+         (body (find-if (lambda (line) (search "(combine-" line)) lines)))
+    (check (and header body
+                (= (+ 2 (search "(fn " header)) (search "(combine-" body)))
+           "A nested long fn body drifted from its opening parenthesis:~%~A" output))
+  (check (equal (format nil "(fn (x)~%  (let y = (+ x 1))~%  (+ y 2))")
+                (format-source "(fn (x) (let y = (+ x 1)) (+ y 2))"))
+         "Multiple fn body expressions lost their multiline layout.")
+  (dolist (source
+           (list "(fn (x)             x)"
+                 "(coalton [(fn (x)             x) (fn (y)             (+ y 1))])"
+                 "(coalton [(fn (x)             x) (fn (x)             (+ x 1))])"
+                 "(fn (x) (combine-very-long-symbol-name x x x x x x))"
+                 "(coalton [(fn (x) (combine-very-long-symbol-name x x x x x x))])"
+                 "(fn (x) (let y = (+ x 1)) (+ y 2))"
+                 "(fn (x) \"keep             spaces\")"
+                 (format nil "(fn (x) ;; inline~% x)")
+                 (format nil "(fn (x)~% ;; documentation~% x)")
+                 (format nil "(fn (x ;; parameter comment~% y) (+ x y))")))
+    (check-roundtrip source)))
+
 (defun check-file-api ()
   (uiop:with-temporary-file (:pathname target :stream out :type "ct")
     (write-line "(in-package #:trivial-formatter/coalton/fixtures)" out)
@@ -247,6 +289,7 @@
 (defun run-tests ()
   (let ((*checks* 0))
     (check-layouts)
+    (check-fn-layouts)
     (check-coalton-syntax)
     (check-file-api)
     (check-compilation)

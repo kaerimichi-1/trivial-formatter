@@ -54,6 +54,11 @@ when needed. `do` binds, loop labels and conditions, function parameters,
 patterns and type signatures have syntax-specific layout rules. Empty binding
 and parameter lists remain `()`.
 
+An `fn` with one body expression stays on one line when it fits, for example
+`(fn (x) x)`. Extra source whitespace is normalized, including functions inside
+collections. Longer functions wrap their body two spaces from the opening
+parenthesis; comments and multiple body expressions retain a multiline layout.
+
 Inside `coalton-toplevel`, definition groups are separated by one blank line.
 Adjacent declarations for the same name, attributes such as `derive`, and
 leading documentation comments stay attached to their definition. Inline

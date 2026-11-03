@@ -12,10 +12,8 @@
 
   (declare pair-total (ufix -> ufix))
   (define (pair-total _)
-    (fold
-      (fn (acc (tuple _ value))
-        (+ acc value))
-      0 [x => (* x x) :for x :below 5]))
+    (fold (fn (acc (tuple _ value)) (+ acc value)) 0
+          [x => (* x x) :for x :below 5]))
 
   (declare for-sum (ufix -> ufix))
   (define (for-sum limit)
